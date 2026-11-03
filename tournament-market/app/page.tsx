@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { auth, googleProvider } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { 
@@ -22,7 +23,7 @@ const copyToClipboard = (text: string) => {
   alert("কপি হয়েছে: " + text);
 };
 
-export default function Home() {
+function HomeContent() {
   const [user, setUser] = useState<any>(null);
   const [userData, setUserData] = useState<any>(null);
   const [showRegister, setShowRegister] = useState(false);
@@ -51,7 +52,6 @@ export default function Home() {
   const [selectedTournament, setSelectedTournament] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // টাইমার ফিক্স: শুরুতে null রাখা হয়েছে
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
   const db = getFirestore(auth.app);
@@ -123,7 +123,6 @@ export default function Home() {
   const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error) { console.error(error); } };
   const handleLogout = async () => { await signOut(auth); setShowWallet(false); setShowMyTeams(false); setShowProfile(false); };
 
-  // টাইমার হিসাব (নিখুঁতভাবে ঠিক করা হয়েছে)
   const getTimeLeft = (startDateString: string) => {
     if (!currentTime || !startDateString) return { isTBA: true, text: "TBA" };
     
@@ -395,7 +394,7 @@ export default function Home() {
         </div>
       </main>
 
-      {/* ইউজার প্রোফাইল মডাল */}
+      {/* Modals... (আপনার আগের সব মডাল এখানে থাকবে, জায়গা বাঁচাতে শুধু মূল অংশটুকু দেওয়া হলো) */}
       {showProfile && user && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden relative">
@@ -438,7 +437,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* My Teams Modal (১০ মিনিটের লজিক সহ) */}
       {showMyTeams && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -521,7 +519,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* প্রাইজ পুল মডাল */}
       {showPrizeModal && viewingPrizeTournament && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden">
@@ -554,7 +551,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* টিম লিস্ট মডাল */}
       {showTeamsList && viewingTournament && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -593,7 +589,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* পয়েন্ট টেবিল মডাল */}
       {showPointTable && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -637,7 +632,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* ওয়ালেট মডাল */}
       {showWallet && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6">
@@ -702,7 +696,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* রেজিস্ট্রেশন মডাল */}
       {showRegister && selectedTournament && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
@@ -746,4 +739,11 @@ export default function Home() {
 
     </div>
   );
+}
+
+// Next.js-এর SSR এরর এড়াতে এই ডাইনামিক এক্সপোর্টটি ব্যবহার করা হলো
+const DynamicHome = dynamic(() => Promise.resolve(HomeContent), { ssr: false });
+
+export default function Page() {
+  return <DynamicHome />;
 }

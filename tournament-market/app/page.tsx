@@ -51,13 +51,14 @@ export default function Home() {
   const [selectedTournament, setSelectedTournament] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // টাইমার ফিক্স: শুরুতে null রাখা হয়েছে
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
   const db = getFirestore(auth.app);
   const ADMIN_EMAIL = "tournamentmarketbd@gmail.com"; 
 
- useEffect(() => {
-    setCurrentTime(new Date()); // এই লাইনটি যোগ করুন (প্রথমবার লোড হওয়ার জন্য)
+  useEffect(() => {
+    setCurrentTime(new Date());
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -122,10 +123,12 @@ export default function Home() {
   const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error) { console.error(error); } };
   const handleLogout = async () => { await signOut(auth); setShowWallet(false); setShowMyTeams(false); setShowProfile(false); };
 
- }; const getTimeLeft = (startDateString: string) => {
-    if (!startDateString) return { isTBA: true, text: "TBA" };
+  // টাইমার হিসাব (নিখুঁতভাবে ঠিক করা হয়েছে)
+  const getTimeLeft = (startDateString: string) => {
+    if (!currentTime || !startDateString) return { isTBA: true, text: "TBA" };
+    
     const targetDate = new Date(startDateString).getTime();
-    if (isNaN(targetDate)) return { isTBA: true, text: "TBA" 
+    if (isNaN(targetDate)) return { isTBA: true, text: "TBA" };
 
     const difference = targetDate - currentTime.getTime();
     if (difference <= 0) return { isLive: true, text: "LIVE NOW" };
@@ -277,7 +280,7 @@ export default function Home() {
       </nav>
 
       <div className="bg-purple-900/20 border-b border-purple-500/20 py-2 overflow-hidden">
-        <div className="text-purple-300 text-sm font-bold">
+        <div className="text-purple-300 text-sm font-bold text-center">
           📢 যেকোনো সমস্যায় আমাদের টেলিগ্রাম গ্রুপে যোগাযোগ করুন। টুর্নামেন্টের রুম আইডি ম্যাচের ১০ মিনিট আগে আপডেট হবে। 📢
         </div>
       </div>
@@ -449,7 +452,7 @@ export default function Home() {
                   const tourData = tournaments.find(t => t.id === team.tournamentId);
                   let isTimeToShow = false;
                   
-                  if (tourData && tourData.startDate) {
+                  if (tourData && tourData.startDate && currentTime) {
                     const matchTime = new Date(tourData.startDate).getTime();
                     const currentTimeMs = currentTime.getTime();
                     const tenMinsInMs = 10 * 60 * 1000;

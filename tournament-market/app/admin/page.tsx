@@ -1,0 +1,289 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { auth, googleProvider } from '../firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getFirestore, collection, getDocs, doc, updateDoc, addDoc, 
+  onSnapshot, increment, query, where, serverTimestamp, deleteDoc
+} from 'firebase/firestore';
+import Link from 'next/link';
+
+export default function AdminPanel() {
+  const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const [teams, setTeams] = useState<any[]>([]);
+  const [tournaments, setTournaments] = useState<any[]>([]);
+  const [pendingDeposits, setPendingDeposits] = useState<any[]>([]);
+  const [pendingWithdraws, setPendingWithdraws] = useState<any[]>([]);
+  const [pointTable, setPointTable] = useState<any[]>([]); 
+
+  const db = getFirestore(auth.app);
+  const ADMIN_EMAIL = "tournamentmarketbd@gmail.com"; 
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser && currentUser.email === ADMIN_EMAIL) setIsAdmin(true);
+      else setIsAdmin(false);
+      setLoading(false);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  const loadAdminData = async () => {
+    try {
+      const teamSnap = await getDocs(collection(db, "registrations"));
+      const teamsData: any[] = [];
+      teamSnap.forEach((doc) => { teamsData.push({ id: doc.id, ...doc.data() }); });
+      setTeams(teamsData);
+
+      const qDep = query(collection(db, "transactions"), where("type", "==", "deposit"), where("status", "==", "pending"));
+      const depSnap = await getDocs(qDep);
+      const depData: any[] = [];
+      depSnap.forEach((doc) => { depData.push({ id: doc.id, ...doc.data() }); });
+      setPendingDeposits(depData);
+
+      const qWith = query(collection(db, "transactions"), where("type", "==", "withdraw"), where("status", "==", "pending"));
+      const withSnap = await getDocs(qWith);
+      const withData: any[] = [];
+      withSnap.forEach((doc) => { withData.push({ id: doc.id, ...doc.data() }); });
+      setPendingWithdraws(withData);
+    } catch (error) { console.error(error); }
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadAdminData();
+      
+      const unsubTour = onSnapshot(collection(db, "tournaments"), (snapshot) => {
+        const tData: any[] = [];
+        snapshot.forEach((doc) => { tData.push({ id: doc.id, ...doc.data() }); });
+        setTournaments(tData);
+      });
+
+      const unsubPointTable = onSnapshot(collection(db, "pointTable"), (snapshot) => {
+        const tableData: any[] = [];
+        snapshot.forEach((doc) => { tableData.push({ id: doc.id, ...doc.data() }); });
+        tableData.sort((a, b) => b.tp - a.tp);
+        setPointTable(tableData);
+      });
+
+      return () => { unsubTour(); unsubPointTable(); };
+    }
+  }, [isAdmin]);
+
+  const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error) { console.error(error); } };
+
+  // প্রাইজমানি আপডেট
+  const updatePrize = async (tourId: string, prizeType: string, value: string) => {
+    try {
+      const tourRef = doc(db, "tournaments", tourId);
+      await updateDoc(tourRef, { [prizeType]: Number(value) });
+    } catch (error) { console.error("Error updating prize:", error); }
+  };
+
+  const approveDeposit = async (transactionId: string, userId: string, amount: number) => {
+    try {
+      await updateDoc(doc(db, "transactions", transactionId), { status: "approved" });
+      await updateDoc(doc(db, "users", userId), { balance: increment(amount) });
+      setPendingDeposits(pendingDeposits.filter(d => d.id !== transactionId));
+    } catch (error) { console.error(error); }
+  };
+
+  const approveWithdraw = async (transactionId: string) => {
+    try {
+      await updateDoc(doc(db, "transactions", transactionId), { status: "approved" });
+      setPendingWithdraws(pendingWithdraws.filter(d => d.id !== transactionId));
+    } catch (error) { console.error(error); }
+  };
+
+  const updateStatus = async (teamId: string, newStatus: string) => {
+    try {
+      await updateDoc(doc(db, "registrations", teamId), { status: newStatus });
+      setTeams(teams.map(t => t.id === teamId ? { ...t, status: newStatus } : t));
+    } catch (error) { console.error(error); }
+  };
+
+  // রুম আইডি সেভ করা
+  const saveRoomDetails = async (teamId: string, roomId: string, roomPass: string) => {
+    try {
+      await updateDoc(doc(db, "registrations", teamId), { roomId, roomPass });
+      alert("রুম আইডি ও পাসওয়ার্ড সেভ হয়েছে!");
+      setTeams(teams.map(t => t.id === teamId ? { ...t, roomId, roomPass } : t));
+    } catch (error) { console.error(error); }
+  };
+
+  const handleCreateTournament = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, "tournaments"), {
+        name: formData.get('name'),
+        startDate: formData.get('startDate'), 
+        time: formData.get('time'), 
+        entryFee: Number(formData.get('entryFee')),
+        prize1: Number(formData.get('prize1')),
+        prize2: Number(formData.get('prize2')),
+        prize3: Number(formData.get('prize3')),
+        prize4: Number(formData.get('prize4')),
+        maxTeams: Number(formData.get('maxTeams')),
+        type: "SQUAD",
+        status: "upcoming"
+      });
+      alert("নতুন টুর্নামেন্ট যোগ হয়েছে!");
+      e.currentTarget.reset();
+    } catch (error) { console.error(error); }
+  };
+
+  const handleSavePoints = async (teamName: string, e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const mp = Number(formData.get('mp')) || 0;
+    const cd = Number(formData.get('cd')) || 0;
+    const pp = Number(formData.get('pp')) || 0;
+    const kp = Number(formData.get('kp')) || 0;
+    const tp = pp + kp;
+
+    try {
+      const existingTeam = pointTable.find(t => t.teamName === teamName);
+      if (existingTeam) {
+        await updateDoc(doc(db, "pointTable", existingTeam.id), { mp, cd, pp, kp, tp });
+      } else {
+        await addDoc(collection(db, "pointTable"), { teamName, mp, cd, pp, kp, tp });
+      }
+      alert(`${teamName} এর পয়েন্ট সেভ হয়েছে!`);
+    } catch (error) { console.error(error); }
+  };
+
+  if (loading) return <div className="min-h-screen bg-[#0a0a0a] flex justify-center items-center text-white">লোড হচ্ছে...</div>;
+  if (!user || !isAdmin) return <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center"><h1 className="text-2xl font-bold text-red-500 mb-4">Access Denied</h1><p>আপনি অ্যাডমিন নন।</p><Link href="/" className="text-blue-400 mt-4 underline">হোম পেজে ফিরে যান</Link></div>;
+
+  const uniqueRegisteredTeams = Array.from(new Set(teams.map(t => t.teamName)));
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] text-white p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
+          <h1 className="text-3xl font-bold text-purple-500">Admin Dashboard</h1>
+          <Link href="/" className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg transition">Back to Home</Link>
+        </div>
+
+        {/* প্রাইজমানি আপডেট */}
+        <div className="bg-[#1a1a1a] p-5 rounded-xl border border-gray-800 mb-8 border-l-4 border-l-green-500">
+          <h3 className="text-lg font-bold text-green-400 mb-4">💰 টুর্নামেন্টের প্রাইজমানি আপডেট</h3>
+          <div className="space-y-4">
+            {tournaments.map(tour => (
+              <div key={tour.id} className="bg-[#0a0a0a] p-4 rounded-lg border border-gray-800">
+                <p className="font-bold text-white mb-2">{tour.name}</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div><label className="text-xs text-gray-500">১ম প্রাইজ</label><input type="number" defaultValue={tour.prize1} onBlur={(e) => updatePrize(tour.id, 'prize1', e.target.value)} className="w-full bg-[#151515] border border-gray-700 rounded p-2 text-white" /></div>
+                  <div><label className="text-xs text-gray-500">২য় প্রাইজ</label><input type="number" defaultValue={tour.prize2} onBlur={(e) => updatePrize(tour.id, 'prize2', e.target.value)} className="w-full bg-[#151515] border border-gray-700 rounded p-2 text-white" /></div>
+                  <div><label className="text-xs text-gray-500">৩য় প্রাইজ</label><input type="number" defaultValue={tour.prize3} onBlur={(e) => updatePrize(tour.id, 'prize3', e.target.value)} className="w-full bg-[#151515] border border-gray-700 rounded p-2 text-white" /></div>
+                  <div><label className="text-xs text-gray-500">৪র্থ প্রাইজ</label><input type="number" defaultValue={tour.prize4} onBlur={(e) => updatePrize(tour.id, 'prize4', e.target.value)} className="w-full bg-[#151515] border border-gray-700 rounded p-2 text-white" /></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* পয়েন্ট আপডেট */}
+        <div className="bg-[#1a1a1a] p-5 rounded-xl border border-gray-800 mb-8 border-l-4 border-l-yellow-500">
+          <h3 className="text-lg font-bold text-yellow-400 mb-4">🏆 ম্যাচের পয়েন্ট আপডেট</h3>
+          <div className="space-y-4">
+            {uniqueRegisteredTeams.length === 0 ? <p className="text-gray-500 text-sm">কোনো টিম নেই।</p> : 
+              uniqueRegisteredTeams.map((teamName, idx) => {
+                const existingData = pointTable.find(t => t.teamName === teamName);
+                return (
+                <form key={idx} onSubmit={(e) => handleSavePoints(teamName, e)} className="bg-[#0a0a0a] p-3 rounded-lg border border-gray-800 flex flex-col md:flex-row items-center justify-between gap-3">
+                  <div className="w-full md:w-1/3 font-bold text-white uppercase">{teamName}</div>
+                  <div className="flex gap-2 w-full md:w-2/3 justify-end">
+                    <input type="number" name="mp" placeholder="MP" defaultValue={existingData?.mp || ''} className="w-16 bg-[#151515] border border-gray-700 rounded p-2 text-white text-center" />
+                    <input type="number" name="cd" placeholder="CD" defaultValue={existingData?.cd || ''} className="w-16 bg-[#151515] border border-gray-700 rounded p-2 text-white text-center" />
+                    <input type="number" name="pp" placeholder="PP" defaultValue={existingData?.pp || ''} className="w-16 bg-[#151515] border border-gray-700 rounded p-2 text-white text-center" />
+                    <input type="number" name="kp" placeholder="KP" defaultValue={existingData?.kp || ''} className="w-16 bg-[#151515] border border-gray-700 rounded p-2 text-white text-center" />
+                    <button type="submit" className="bg-yellow-600 hover:bg-yellow-700 text-black px-3 py-2 rounded font-bold text-sm">Save</button>
+                  </div>
+                </form>
+              )})
+            }
+          </div>
+        </div>
+
+        {/* নতুন টুর্নামেন্ট */}
+        <div className="bg-[#1a1a1a] p-5 rounded-xl border border-gray-800 mb-8">
+          <h3 className="text-lg font-bold text-purple-400 mb-4">➕ নতুন টুর্নামেন্ট</h3>
+          <form onSubmit={handleCreateTournament} className="grid grid-cols-2 gap-3">
+            <input type="text" name="name" required placeholder="নাম" className="col-span-2 bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="text" name="time" required placeholder="সময় (যেমন: রাত ১১টা)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="datetime-local" name="startDate" required className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" title="তারিখ ও সময়" />
+            <input type="number" name="entryFee" required placeholder="এন্ট্রি ফি (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="number" name="maxTeams" required placeholder="সর্বোচ্চ টিম" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="number" name="prize1" required placeholder="১ম প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="number" name="prize2" required placeholder="২য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="number" name="prize3" required placeholder="৩য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <input type="number" name="prize4" required placeholder="৪র্থ প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white" />
+            <button type="submit" className="col-span-2 bg-purple-600 hover:bg-purple-700 text-white py-2 rounded font-bold mt-2">টুর্নামেন্ট তৈরি করুন</button>
+          </form>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-[#1a1a1a] p-5 rounded-xl border border-gray-800">
+            <h3 className="text-lg font-bold text-yellow-400 mb-4">💰 পেন্ডিং ডিপোজিট ({pendingDeposits.length})</h3>
+            {pendingDeposits.map(dep => (
+              <div key={dep.id} className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-gray-800 mb-2">
+                <div><p className="font-bold text-sm text-white">{dep.userName}</p><p className="text-green-400 font-bold">৳ {dep.amount}</p><p className="text-xs text-gray-500">TrxID: {dep.trxId}</p></div>
+                <button onClick={() => approveDeposit(dep.id, dep.userId, dep.amount)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-bold">Approve</button>
+              </div>
+            ))}
+          </div>
+          <div className="bg-[#1a1a1a] p-5 rounded-xl border border-gray-800">
+            <h3 className="text-lg font-bold text-red-400 mb-4">💸 পেন্ডিং উইথড্র ({pendingWithdraws.length})</h3>
+            {pendingWithdraws.map(withd => (
+              <div key={withd.id} className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-gray-800 mb-2">
+                <div><p className="font-bold text-sm text-white">{withd.userName}</p><p className="text-red-400 font-bold">৳ {withd.amount}</p></div>
+                <button onClick={() => approveWithdraw(withd.id)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm font-bold">Approve</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* রেজিস্টার্ড টিম ও রুম আইডি */}
+        <h3 className="text-lg font-bold text-blue-400 mb-4">📋 রেজিস্টার্ড টিম ও রুম আইডি ({teams.length})</h3>
+        <div className="space-y-4">
+          {teams.map((team) => (
+            <div key={team.id} className="bg-[#1a1a1a] p-4 rounded-xl border border-gray-800">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-bold text-white text-lg flex items-center gap-3"><div className="w-8 h-8 bg-purple-600 rounded flex items-center justify-center text-xs">{team.teamTag}</div>{team.teamName}<span className="text-sm text-purple-400 font-normal ml-2">{team.tournamentName}</span></h4>
+                <span className={`px-2 py-1 rounded text-xs font-bold ${team.status === 'approved' ? 'bg-green-500/20 text-green-400' : team.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{team.status.toUpperCase()}</span>
+              </div>
+              <p className="text-sm text-gray-400 mb-2">Captain: {team.captainEmail}</p>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                {team.players?.map((p: any, i: number) => (
+                  <div key={i} className="bg-[#0a0a0a] p-2 rounded border border-gray-800 text-xs"><span className="text-purple-400 font-bold">P{i+1}:</span> {p.name} <br/> <span className="text-gray-500">UID: {p.uid}</span></div>
+                ))}
+              </div>
+              <div className="flex gap-2 mb-4">
+                <button onClick={() => updateStatus(team.id, 'approved')} disabled={team.status === 'approved'} className="flex-1 bg-green-600/20 text-green-500 border border-green-500/50 hover:bg-green-600 hover:text-white py-2 rounded font-bold transition disabled:opacity-50">Approve</button>
+                <button onClick={() => updateStatus(team.id, 'rejected')} disabled={team.status === 'rejected'} className="flex-1 bg-red-600/20 text-red-500 border border-red-500/50 hover:bg-red-600 hover:text-white py-2 rounded font-bold transition disabled:opacity-50">Reject</button>
+              </div>
+              {team.status === 'approved' && (
+                <div className="flex gap-2 bg-[#0a0a0a] p-3 rounded-lg border border-gray-800">
+                  <input type="text" placeholder="Room ID" defaultValue={team.roomId} id={`roomId_${team.id}`} className="flex-1 bg-[#151515] border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-blue-500" />
+                  <input type="text" placeholder="Password" defaultValue={team.roomPass} id={`roomPass_${team.id}`} className="flex-1 bg-[#151515] border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-blue-500" />
+                  <button onClick={() => {
+                    const rId = (document.getElementById(`roomId_${team.id}`) as HTMLInputElement).value;
+                    const rPass = (document.getElementById(`roomPass_${team.id}`) as HTMLInputElement).value;
+                    saveRoomDetails(team.id, rId, rPass);
+                  }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 rounded text-sm font-bold transition">Save</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -276,9 +276,9 @@ export default function Home() {
       </nav>
 
       <div className="bg-purple-900/20 border-b border-purple-500/20 py-2 overflow-hidden">
-        <marquee className="text-purple-300 text-sm font-bold">
+        <div className="text-purple-300 text-sm font-bold">
           📢 যেকোনো সমস্যায় আমাদের টেলিগ্রাম গ্রুপে যোগাযোগ করুন। টুর্নামেন্টের রুম আইডি ম্যাচের ১০ মিনিট আগে আপডেট হবে। 📢
-        </marquee>
+        </div>
       </div>
 
       <header className="text-center py-10 px-4">

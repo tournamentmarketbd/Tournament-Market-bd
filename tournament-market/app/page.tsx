@@ -23,6 +23,7 @@ const copyToClipboard = (text: string) => {
   alert("কপি হয়েছে: " + text);
 };
 
+// মূল কন্টেন্ট
 function HomeContent() {
   const [user, setUser] = useState<any>(null);
   const [userData, setUserData] = useState<any>(null);
@@ -52,13 +53,12 @@ function HomeContent() {
   const [selectedTournament, setSelectedTournament] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   const db = getFirestore(auth.app);
   const ADMIN_EMAIL = "tournamentmarketbd@gmail.com"; 
 
   useEffect(() => {
-    setCurrentTime(new Date());
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -124,8 +124,7 @@ function HomeContent() {
   const handleLogout = async () => { await signOut(auth); setShowWallet(false); setShowMyTeams(false); setShowProfile(false); };
 
   const getTimeLeft = (startDateString: string) => {
-    if (!currentTime || !startDateString) return { isTBA: true, text: "TBA" };
-    
+    if (!startDateString) return { isTBA: true, text: "TBA" };
     const targetDate = new Date(startDateString).getTime();
     if (isNaN(targetDate)) return { isTBA: true, text: "TBA" };
 
@@ -163,19 +162,10 @@ function HomeContent() {
 
     try {
       await addDoc(collection(db, "transactions"), {
-        userId: user.uid, 
-        userEmail: user.email, 
-        userName: user.displayName || "Unknown", 
-        type: "deposit", 
-        amount: Number(depositAmount), 
-        trxId: depositTrxId,
-        status: "pending", 
-        date: serverTimestamp()
+        userId: user.uid, userEmail: user.email, userName: user.displayName || "Unknown", type: "deposit", amount: Number(depositAmount), trxId: depositTrxId, status: "pending", date: serverTimestamp()
       });
       alert("ডিপোজিট রিকোয়েস্ট পাঠানো হয়েছে!");
-      setDepositTrxId(""); 
-      setDepositAmount("");
-      setShowWallet(false);
+      setDepositTrxId(""); setDepositAmount(""); setShowWallet(false);
     } catch (error) { console.error(error); }
   };
 
@@ -394,7 +384,7 @@ function HomeContent() {
         </div>
       </main>
 
-      {/* Modals... (আপনার আগের সব মডাল এখানে থাকবে, জায়গা বাঁচাতে শুধু মূল অংশটুকু দেওয়া হলো) */}
+      {/* Modals... */}
       {showProfile && user && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden relative">
@@ -450,7 +440,7 @@ function HomeContent() {
                   const tourData = tournaments.find(t => t.id === team.tournamentId);
                   let isTimeToShow = false;
                   
-                  if (tourData && tourData.startDate && currentTime) {
+                  if (tourData && tourData.startDate) {
                     const matchTime = new Date(tourData.startDate).getTime();
                     const currentTimeMs = currentTime.getTime();
                     const tenMinsInMs = 10 * 60 * 1000;
@@ -741,7 +731,7 @@ function HomeContent() {
   );
 }
 
-// Next.js-এর SSR এরর এড়াতে এই ডাইনামিক এক্সপোর্টটি ব্যবহার করা হলো
+// ১০০% নিশ্চিত SSR বন্ধ করার জন্য
 const DynamicHome = dynamic(() => Promise.resolve(HomeContent), { ssr: false });
 
 export default function Page() {

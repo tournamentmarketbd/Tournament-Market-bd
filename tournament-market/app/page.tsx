@@ -51,12 +51,13 @@ export default function Home() {
   const [selectedTournament, setSelectedTournament] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
   const db = getFirestore(auth.app);
   const ADMIN_EMAIL = "tournamentmarketbd@gmail.com"; 
 
-  useEffect(() => {
+ useEffect(() => {
+    setCurrentTime(new Date()); // এই লাইনটি যোগ করুন (প্রথমবার লোড হওয়ার জন্য)
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -121,10 +122,10 @@ export default function Home() {
   const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error) { console.error(error); } };
   const handleLogout = async () => { await signOut(auth); setShowWallet(false); setShowMyTeams(false); setShowProfile(false); };
 
-  const getTimeLeft = (startDateString: string) => {
+ }; const getTimeLeft = (startDateString: string) => {
     if (!startDateString) return { isTBA: true, text: "TBA" };
     const targetDate = new Date(startDateString).getTime();
-    if (isNaN(targetDate)) return { isTBA: true, text: "TBA" };
+    if (isNaN(targetDate)) return { isTBA: true, text: "TBA" 
 
     const difference = targetDate - currentTime.getTime();
     if (difference <= 0) return { isLive: true, text: "LIVE NOW" };

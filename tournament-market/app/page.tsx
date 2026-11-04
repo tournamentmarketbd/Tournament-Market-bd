@@ -1,338 +1,744 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
+import { useState, useEffect, Suspense } from 'react';
+import { auth, googleProvider } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { 
-  getFirestore, collection, getDocs, doc, updateDoc, addDoc, 
-  onSnapshot, increment, query, where, deleteDoc
+  getFirestore, collection, doc, updateDoc, addDoc, 
+  onSnapshot, setDoc, increment, query, where, serverTimestamp
 } from 'firebase/firestore';
 import Link from 'next/link';
 
-function AdminPanel() {
-  const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
+const formatDate = (timestamp: any) => {
+  if (!timestamp) return "এখনই";
+  try {
+    if (timestamp.toDate) return timestamp.toDate().toLocaleString('bn-BD');
+    return new Date(timestamp).toLocaleString('bn-BD');
+  } catch (error) { return "তারিখ নেই"; }
+};
 
-  // ডেটা স্টেট
-  const [teams, setTeams] = useState<any[]>([]);
+const copyToClipboard = (text: string) => {
+  navigator.clipboard.writeText(text);
+  alert("কপি হয়েছে: " + text);
+};
+
+function HomeContent() {
+  const [user, setUser] = useState<any>(null);
+  const [userData, setUserData] = useState<any>(null);
+  const [showRegister, setShowRegister] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  
+  const [showMyTeams, setShowMyTeams] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showPointTable, setShowPointTable] = useState(false); 
+  
+  const [showTeamsList, setShowTeamsList] = useState(false);
+  const [viewingTournament, setViewingTournament] = useState<any>(null);
+  
+  const [showPrizeModal, setShowPrizeModal] = useState(false);
+  const [viewingPrizeTournament, setViewingPrizeTournament] = useState<any>(null);
+  
+  const [myTeams, setMyTeams] = useState<any[]>([]);
   const [tournaments, setTournaments] = useState<any[]>([]);
-  const [pendingDeposits, setPendingDeposits] = useState<any[]>([]);
-  const [pendingWithdraws, setPendingWithdraws] = useState<any[]>([]);
+  const [allRegistrations, setAllRegistrations] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [pointTable, setPointTable] = useState<any[]>([]); 
+  
+  const [depositTrxId, setDepositTrxId] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [selectedTournament, setSelectedTournament] = useState<any>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   const db = getFirestore(auth.app);
   const ADMIN_EMAIL = "tournamentmarketbd@gmail.com"; 
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser && currentUser.email === ADMIN_EMAIL) setIsAdmin(true);
-      else setIsAdmin(false);
-      setLoading(false);
-    });
-    return () => unsubscribeAuth();
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  const loadAdminData = async () => {
-    try {
-      const teamSnap = await getDocs(collection(db, "registrations"));
-      const teamsData: any[] = [];
-      teamSnap.forEach((doc) => { teamsData.push({ id: doc.id, ...doc.data() }); });
-      setTeams(teamsData);
-
-      const qDep = query(collection(db, "transactions"), where("type", "==", "deposit"), where("status", "==", "pending"));
-      const depSnap = await getDocs(qDep);
-      const depData: any[] = [];
-      depSnap.forEach((doc) => { depData.push({ id: doc.id, ...doc.data() }); });
-      setPendingDeposits(depData);
-
-      const qWith = query(collection(db, "transactions"), where("type", "==", "withdraw"), where("status", "==", "pending"));
-      const withSnap = await getDocs(qWith);
-      const withData: any[] = [];
-      withSnap.forEach((doc) => { withData.push({ id: doc.id, ...doc.data() }); });
-      setPendingWithdraws(withData);
-    } catch (error) { console.error(error); }
-  };
-
   useEffect(() => {
-    if (isAdmin) {
-      loadAdminData();
-      
-      const unsubTour = onSnapshot(collection(db, "tournaments"), (snapshot) => {
-        const tData: any[] = [];
-        snapshot.forEach((doc) => { tData.push({ id: doc.id, ...doc.data() }); });
-        setTournaments(tData);
-      });
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      setIsAdmin(currentUser?.email === ADMIN_EMAIL);
 
-      const unsubPointTable = onSnapshot(collection(db, "pointTable"), (snapshot) => {
-        const tableData: any[] = [];
-        snapshot.forEach((doc) => { tableData.push({ id: doc.id, ...doc.data() }); });
-        tableData.sort((a, b) => b.tp - a.tp);
-        setPointTable(tableData);
-      });
+      if (currentUser) {
+        const userRef = doc(db, "users", currentUser.uid);
+        const unsubUser = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) setUserData(docSnap.data());
+          else {
+            setDoc(userRef, { name: currentUser.displayName, email: currentUser.email, balance: 0 });
+            setUserData({ balance: 0 });
+          }
+        });
 
-      return () => { unsubTour(); unsubPointTable(); };
-    }
-  }, [isAdmin]);
+        const qMyTeams = query(collection(db, "registrations"), where("captainUid", "==", currentUser.uid));
+        const unsubMyTeams = onSnapshot(qMyTeams, (snapshot) => {
+          const myTeamsData: any[] = [];
+          snapshot.forEach((doc) => { myTeamsData.push({ id: doc.id, ...doc.data() }); });
+          setMyTeams(myTeamsData);
+        });
+
+        const qTrans = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
+        const unsubTrans = onSnapshot(qTrans, (snapshot) => {
+          const transData: any[] = [];
+          snapshot.forEach((doc) => { transData.push({ id: doc.id, ...doc.data() }); });
+          setTransactions(transData.sort((a, b) => (b.date?.seconds || 0) - (a.date?.seconds || 0)));
+        });
+
+        return () => { unsubUser(); unsubMyTeams(); unsubTrans(); };
+      } else {
+        setUserData(null); setMyTeams([]); setTransactions([]);
+      }
+    });
+    
+    const unsubTournaments = onSnapshot(collection(db, "tournaments"), (snapshot) => {
+      const tourData: any[] = [];
+      snapshot.forEach((doc) => { tourData.push({ id: doc.id, ...doc.data() }); });
+      setTournaments(tourData);
+    });
+
+    const unsubAllRegs = onSnapshot(collection(db, "registrations"), (snapshot) => {
+      const regsData: any[] = [];
+      snapshot.forEach((doc) => { regsData.push({ id: doc.id, ...doc.data() }); });
+      setAllRegistrations(regsData);
+    });
+
+    const unsubPointTable = onSnapshot(collection(db, "pointTable"), (snapshot) => {
+      const tableData: any[] = [];
+      snapshot.forEach((doc) => { tableData.push({ id: doc.id, ...doc.data() }); });
+      tableData.sort((a, b) => b.tp - a.tp);
+      setPointTable(tableData);
+    });
+
+    return () => { unsubscribeAuth(); unsubTournaments(); unsubAllRegs(); unsubPointTable(); };
+  }, []);
 
   const handleLogin = async () => { try { await signInWithPopup(auth, googleProvider); } catch (error) { console.error(error); } };
+  const handleLogout = async () => { await signOut(auth); setShowWallet(false); setShowMyTeams(false); setShowProfile(false); };
 
-  const updatePrize = async (tourId: string, prizeType: string, value: string) => {
-    try {
-      const tourRef = doc(db, "tournaments", tourId);
-      await updateDoc(tourRef, { [prizeType]: Number(value) });
-      alert("প্রাইজ আপডেট হয়েছে!");
-    } catch (error) { console.error(error); }
+  const getTimeLeft = (startDateString: string) => {
+    if (!startDateString) return { isTBA: true, text: "TBA" };
+    const targetDate = new Date(startDateString).getTime();
+    if (isNaN(targetDate)) return { isTBA: true, text: "TBA" };
+
+    const difference = targetDate - currentTime.getTime();
+    if (difference <= 0) return { isLive: true, text: "LIVE NOW" };
+
+    const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
+    const minutes = Math.floor((difference / 1000 / 60) % 60);
+    const seconds = Math.floor((difference / 1000) % 60);
+
+    return { 
+      isLive: false, 
+      isTBA: false,
+      h: hours.toString().padStart(2, '0'), 
+      m: minutes.toString().padStart(2, '0'), 
+      s: seconds.toString().padStart(2, '0') 
+    };
   };
 
-  const approveDeposit = async (transactionId: string, userId: string, amount: number) => {
-    try {
-      await updateDoc(doc(db, "transactions", transactionId), { status: "approved" });
-      await updateDoc(doc(db, "users", userId), { balance: increment(amount) });
-      setPendingDeposits(pendingDeposits.filter(d => d.id !== transactionId));
-    } catch (error) { console.error(error); }
+  const openTeamsList = (tour: any) => {
+    setViewingTournament(tour);
+    setShowTeamsList(true);
   };
 
-  const approveWithdraw = async (transactionId: string) => {
-    try {
-      await updateDoc(doc(db, "transactions", transactionId), { status: "approved" });
-      setPendingWithdraws(pendingWithdraws.filter(d => d.id !== transactionId));
-    } catch (error) { console.error(error); }
+  const openPrizeModal = (tour: any) => {
+    setViewingPrizeTournament(tour);
+    setShowPrizeModal(true);
   };
 
-  const updateStatus = async (teamId: string, newStatus: string) => {
-    try {
-      await updateDoc(doc(db, "registrations", teamId), { status: newStatus });
-      setTeams(teams.map(t => t.id === teamId ? { ...t, status: newStatus } : t));
-    } catch (error) { console.error(error); }
-  };
+  const handleDeposit = async () => {
+    if (!depositTrxId || !depositAmount || Number(depositAmount) < 10) { 
+      alert("সঠিক ট্রানজেকশন আইডি এবং সর্বনিম্ন ১০ টাকা লিখুন!"); 
+      return; 
+    }
 
-  const saveRoomDetails = async (teamId: string, roomId: string, roomPass: string) => {
     try {
-      await updateDoc(doc(db, "registrations", teamId), { roomId, roomPass });
-      alert("রুম আইডি ও পাসওয়ার্ড সেভ হয়েছে!");
-      setTeams(teams.map(t => t.id === teamId ? { ...t, roomId, roomPass } : t));
-    } catch (error) { console.error(error); }
-  };
-
-  const handleCreateTournament = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    try {
-      await addDoc(collection(db, "tournaments"), {
-        name: formData.get('name'),
-        startDate: formData.get('startDate'), 
-        time: formData.get('time'), 
-        entryFee: Number(formData.get('entryFee')),
-        prize1: Number(formData.get('prize1')),
-        prize2: Number(formData.get('prize2')),
-        prize3: Number(formData.get('prize3')),
-        prize4: Number(formData.get('prize4')),
-        maxTeams: Number(formData.get('maxTeams')),
-        type: "SQUAD",
-        status: "upcoming"
+      await addDoc(collection(db, "transactions"), {
+        userId: user.uid, userEmail: user.email, userName: user.displayName || "Unknown", type: "deposit", amount: Number(depositAmount), trxId: depositTrxId, status: "pending", date: serverTimestamp()
       });
-      alert("নতুন টুর্নামেন্ট যোগ হয়েছে!");
-      e.currentTarget.reset();
+      alert("ডিপোজিট রিকোয়েস্ট পাঠানো হয়েছে!");
+      setDepositTrxId(""); setDepositAmount(""); setShowWallet(false);
     } catch (error) { console.error(error); }
   };
 
-  const handleSavePoints = async (teamName: string, e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const mp = Number(formData.get('mp')) || 0;
-    const cd = Number(formData.get('cd')) || 0;
-    const pp = Number(formData.get('pp')) || 0;
-    const kp = Number(formData.get('kp')) || 0;
-    const tp = pp + kp;
-
+  const handleWithdraw = async () => {
+    if (!withdrawAmount || Number(withdrawAmount) < 50) { alert("সর্বনিম্ন ৫০ টাকা!"); return; }
+    if (Number(withdrawAmount) > userData.balance) { alert("ব্যালেন্স নেই!"); return; }
+    const userTeamName = myTeams.length > 0 ? myTeams[0].teamName : "লোন প্লেয়ার";
     try {
-      const existingTeam = pointTable.find(t => t.teamName === teamName);
-      if (existingTeam) {
-        await updateDoc(doc(db, "pointTable", existingTeam.id), { mp, cd, pp, kp, tp });
-      } else {
-        await addDoc(collection(db, "pointTable"), { teamName, mp, cd, pp, kp, tp });
-      }
-      alert(`${teamName} এর পয়েন্ট সেভ হয়েছে!`);
+      await updateDoc(doc(db, "users", user.uid), { balance: increment(-Number(withdrawAmount)) });
+      await addDoc(collection(db, "transactions"), {
+        userId: user.uid, userEmail: user.email, userName: user.displayName || "Unknown", teamName: userTeamName, type: "withdraw", amount: Number(withdrawAmount), status: "pending", date: serverTimestamp()
+      });
+      alert("উইথড্র রিকোয়েস্ট পাঠানো হয়েছে!");
+      setWithdrawAmount(""); setShowWallet(false);
     } catch (error) { console.error(error); }
   };
 
-  if (loading) return <div className="min-h-screen bg-[#0a0a0a] flex justify-center items-center text-white">লোড হচ্ছে...</div>;
-  if (!user || !isAdmin) return <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center"><h1 className="text-2xl font-bold text-red-500 mb-4">Access Denied</h1><p>আপনি অ্যাডমিন নন।</p><Link href="/" className="text-blue-400 mt-4 underline">হোম পেজে ফিরে যান</Link></div>;
+  const handleJoinTournament = (tour: any) => {
+    if (!user) { alert("আগে লগইন করুন!"); return; }
+    if (userData.balance < tour.entryFee) { alert("ব্যালেন্স নেই!"); setShowWallet(true); return; }
+    
+    const alreadyRegistered = allRegistrations.some((reg) => reg.tournamentId === tour.id && reg.captainUid === user.uid);
+    if (alreadyRegistered) { alert("আপনি ইতিমধ্যে রেজিস্টার করেছেন!"); return; }
+    
+    const currentTeamsCount = allRegistrations.filter((reg) => reg.tournamentId === tour.id).length;
+    if (currentTeamsCount >= tour.maxTeams) { alert("সব স্লট ফুল!"); return; }
+    
+    setSelectedTournament(tour);
+    setShowRegister(true);
+  };
 
-  const uniqueRegisteredTeams = Array.from(new Set(teams.map(t => t.teamName)));
+  const handleRegisterSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true); 
+    
+    const formData = new FormData(e.currentTarget);
+    try {
+      const players = [
+        { name: formData.get('p1_name'), uid: formData.get('p1_uid') },
+        { name: formData.get('p2_name'), uid: formData.get('p2_uid') },
+        { name: formData.get('p3_name'), uid: formData.get('p3_uid') },
+        { name: formData.get('p4_name'), uid: formData.get('p4_uid') },
+        { name: formData.get('p5_name'), uid: formData.get('p5_uid') },
+      ];
+
+      await updateDoc(doc(db, "users", user.uid), { balance: increment(-selectedTournament.entryFee) });
+
+      await addDoc(collection(db, "registrations"), {
+        tournamentId: selectedTournament.id, tournamentName: selectedTournament.name,
+        captainUid: user.uid, captainEmail: user.email,
+        teamName: formData.get('teamName'), teamTag: formData.get('teamTag'),
+        players: players, status: "pending", roomId: "", roomPass: "", registeredAt: serverTimestamp()
+      });
+
+      await addDoc(collection(db, "transactions"), {
+        userId: user.uid, userEmail: user.email, type: "entry_fee", amount: selectedTournament.entryFee, status: "success", date: serverTimestamp(), note: `${selectedTournament.name} এন্ট্রি ফি`
+      });
+
+      alert(`সফলভাবে রেজিস্ট্রেশন হয়েছে!`);
+      setShowRegister(false);
+    } catch (error) { console.error(error); } finally { setIsSubmitting(false); }
+  };
+
+  const totalDeposits = transactions.filter(t => t.type === 'deposit' && t.status === 'approved').reduce((sum, t) => sum + t.amount, 0);
+  const totalWithdraws = transactions.filter(t => t.type === 'withdraw' && t.status === 'approved').reduce((sum, t) => sum + t.amount, 0);
+  const totalEntryFees = transactions.filter(t => t.type === 'entry_fee').reduce((sum, t) => sum + t.amount, 0);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
-          <h1 className="text-3xl font-black text-purple-500 tracking-wider">ADMIN PANEL</h1>
-          <Link href="/" className="bg-[#1a1a1a] hover:bg-[#222] text-gray-300 px-4 py-2 rounded-lg transition border border-gray-700 font-bold">Back to Home</Link>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          {/* প্রাইজমানি আপডেট */}
-          <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
-            <h3 className="text-lg font-bold text-green-400 mb-4 flex items-center gap-2"><span className="text-xl">💰</span> প্রাইজমানি আপডেট</h3>
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
-              {tournaments.length === 0 && <p className="text-gray-500 text-sm">কোনো টুর্নামেন্ট নেই।</p>}
-              {tournaments.map(tour => (
-                <div key={tour.id} className="bg-[#1a1a1a] p-4 rounded-lg border border-gray-800">
-                  <p className="font-bold text-white mb-3 text-sm">{tour.name}</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-[10px] text-gray-500">১ম প্রাইজ</label><input type="number" defaultValue={tour.prize1} onBlur={(e) => updatePrize(tour.id, 'prize1', e.target.value)} className="w-full bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white text-sm" /></div>
-                    <div><label className="text-[10px] text-gray-500">২য় প্রাইজ</label><input type="number" defaultValue={tour.prize2} onBlur={(e) => updatePrize(tour.id, 'prize2', e.target.value)} className="w-full bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white text-sm" /></div>
-                    <div><label className="text-[10px] text-gray-500">৩য় প্রাইজ</label><input type="number" defaultValue={tour.prize3} onBlur={(e) => updatePrize(tour.id, 'prize3', e.target.value)} className="w-full bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white text-sm" /></div>
-                    <div><label className="text-[10px] text-gray-500">৪র্থ প্রাইজ</label><input type="number" defaultValue={tour.prize4} onBlur={(e) => updatePrize(tour.id, 'prize4', e.target.value)} className="w-full bg-[#0a0a0a] border border-gray-700 rounded p-2 text-white text-sm" /></div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-purple-500 selection:text-white pb-20">
+      
+      <nav className="sticky top-0 z-40 w-full bg-[#111111]/90 backdrop-blur-md border-b border-gray-800">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+          <h1 className="text-xl md:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-pink-500">
+            TOURNAMENT MARKET BD
+          </h1>
+          
+          <div className="flex items-center gap-2 md:gap-4">
+            {isAdmin && (
+              <Link href="/admin" className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-md text-sm font-semibold transition">
+                Admin Panel
+              </Link>
+            )}
+            
+            {user ? (
+              <div className="flex items-center gap-2 md:gap-4">
+                <div onClick={() => setShowProfile(true)} className="flex items-center gap-2 cursor-pointer bg-[#1a1a1a] border border-gray-700 rounded-full pl-3 pr-1 py-1 hover:border-purple-500 transition">
+                  <div className="text-right hidden sm:block">
+                    <p className="text-xs font-bold text-gray-200">{user.displayName?.split(' ')[0]}</p>
+                    <p className="text-xs font-bold text-green-400">৳ {userData?.balance || 0}</p>
                   </div>
+                  <img src={user.photoURL || "https://cdn-icons-png.flaticon.com/512/149/149071.png"} alt="Profile" className="w-8 h-8 rounded-full border border-purple-500" />
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* পয়েন্ট আপডেট */}
-          <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
-            <h3 className="text-lg font-bold text-yellow-400 mb-4 flex items-center gap-2"><span className="text-xl">🏆</span> পয়েন্ট আপডেট</h3>
-            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
-              {uniqueRegisteredTeams.length === 0 && <p className="text-gray-500 text-sm">কোনো টিম রেজিস্টার করেনি।</p>}
-              {uniqueRegisteredTeams.map((teamName, idx) => {
-                const existingData = pointTable.find(t => t.teamName === teamName);
-                return (
-                <form key={idx} onSubmit={(e) => handleSavePoints(teamName, e)} className="bg-[#1a1a1a] p-3 rounded-lg border border-gray-800 flex flex-col gap-2">
-                  <div className="font-bold text-white uppercase text-sm truncate">{teamName}</div>
-                  <div className="flex gap-2">
-                    <input type="number" name="mp" placeholder="MP" defaultValue={existingData?.mp || ''} className="w-12 bg-[#0a0a0a] border border-gray-700 rounded p-1 text-white text-center text-xs" />
-                    <input type="number" name="cd" placeholder="CD" defaultValue={existingData?.cd || ''} className="w-12 bg-[#0a0a0a] border border-gray-700 rounded p-1 text-white text-center text-xs" />
-                    <input type="number" name="pp" placeholder="PP" defaultValue={existingData?.pp || ''} className="w-12 bg-[#0a0a0a] border border-gray-700 rounded p-1 text-white text-center text-xs" />
-                    <input type="number" name="kp" placeholder="KP" defaultValue={existingData?.kp || ''} className="w-12 bg-[#0a0a0a] border border-gray-700 rounded p-1 text-white text-center text-xs" />
-                    <button type="submit" className="bg-yellow-600 hover:bg-yellow-700 text-black px-3 rounded font-bold text-xs ml-auto">Save</button>
-                  </div>
-                </form>
-              )})}
-            </div>
-          </div>
-        </div>
-
-        {/* নতুন টুর্নামেন্ট তৈরি */}
-        <div className="bg-[#111] p-5 rounded-xl border border-gray-800 mb-12 shadow-lg">
-          <h3 className="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2"><span className="text-xl">➕</span> নতুন টুর্নামেন্ট তৈরি</h3>
-          <form onSubmit={handleCreateTournament} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <input type="text" name="name" required placeholder="টুর্নামেন্টের নাম" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            <input type="text" name="time" required placeholder="সময় (যেমন: রাত ১১টা)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            <input type="datetime-local" name="startDate" required className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            
-            <input type="number" name="entryFee" required placeholder="এন্ট্রি ফি (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            <input type="number" name="maxTeams" required placeholder="সর্বোচ্চ টিম" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            
-            <input type="number" name="prize1" required placeholder="১ম প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
-            <input type="number" name="prize2" required placeholder="২য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
-            <input type="number" name="prize3" required placeholder="৩য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
-            <input type="number" name="prize4" required placeholder="৪র্থ প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
-            
-            <button type="submit" className="md:col-span-3 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-lg font-black tracking-wider transition">টুর্নামেন্ট তৈরি করুন</button>
-          </form>
-        </div>
-
-        {/* ডিপোজিট এবং উইথড্র */}
-        <div className="grid md:grid-cols-2 gap-8 mb-12">
-          <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
-            <h3 className="text-lg font-bold text-yellow-400 mb-4">💰 পেন্ডিং ডিপোজিট ({pendingDeposits.length})</h3>
-            {pendingDeposits.length === 0 ? <p className="text-sm text-gray-500">কোনো ডিপোজিট নেই।</p> : (
-              <div className="space-y-3">
-                {pendingDeposits.map(dep => (
-                  <div key={dep.id} className="flex justify-between items-center bg-[#1a1a1a] p-3 rounded-lg border border-gray-800">
-                    <div>
-                      <p className="font-bold text-sm text-white">{dep.userName}</p>
-                      <p className="text-green-400 font-bold text-sm">৳ {dep.amount}</p>
-                      <p className="text-[10px] text-gray-400 bg-[#0a0a0a] px-1 mt-1 rounded">TrxID: {dep.trxId}</p>
-                    </div>
-                    <button onClick={() => approveDeposit(dep.id, dep.userId, dep.amount)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded text-xs font-bold transition">Approve</button>
-                  </div>
-                ))}
+                <button onClick={handleLogout} className="bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-md text-sm font-semibold transition">লগ আউট</button>
               </div>
-            )}
-          </div>
-
-          <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
-            <h3 className="text-lg font-bold text-red-400 mb-4">💸 পেন্ডিং উইথড্র ({pendingWithdraws.length})</h3>
-            {pendingWithdraws.length === 0 ? <p className="text-sm text-gray-500">কোনো উইথড্র নেই।</p> : (
-              <div className="space-y-3">
-                {pendingWithdraws.map(withd => (
-                  <div key={withd.id} className="flex justify-between items-center bg-[#1a1a1a] p-3 rounded-lg border border-gray-800">
-                    <div>
-                      <p className="font-bold text-sm text-white">{withd.userName}</p>
-                      <p className="text-red-400 font-bold text-sm">৳ {withd.amount}</p>
-                    </div>
-                    <button onClick={() => approveWithdraw(withd.id)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded text-xs font-bold transition">Approve</button>
-                  </div>
-                ))}
-              </div>
+            ) : (
+              <button onClick={handleLogin} className="bg-white text-black font-bold px-4 py-2 rounded-md hover:bg-gray-200 transition">লগইন</button>
             )}
           </div>
         </div>
+      </nav>
 
-        {/* টিম লিস্ট */}
-        <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
-          <h3 className="text-lg font-bold text-blue-400 mb-6 flex items-center gap-2"><span className="text-xl">📋</span> রেজিস্টার্ড টিম ও রুম আইডি ({teams.length})</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {teams.map((team) => (
-              <div key={team.id} className="bg-[#1a1a1a] p-4 rounded-xl border border-gray-800 flex flex-col justify-between">
+      <div className="bg-purple-900/20 border-b border-purple-500/20 py-2 overflow-hidden">
+        <div className="text-purple-300 text-sm font-bold text-center">
+          📢 যেকোনো সমস্যায় আমাদের টেলিগ্রাম গ্রুপে যোগাযোগ করুন। টুর্নামেন্টের রুম আইডি ম্যাচের ১০ মিনিট আগে আপডেট হবে। 📢
+        </div>
+      </div>
+
+      <header className="text-center py-10 px-4">
+        <h2 className="text-3xl md:text-5xl font-extrabold mb-4">বাংলাদেশের #১ ফ্রি ফায়ার টুর্নামেন্ট</h2>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
+          {tournaments.map((tour) => {
+            const registeredCount = allRegistrations.filter(reg => reg.tournamentId === tour.id).length;
+            const isFull = registeredCount >= tour.maxTeams;
+            const progressPercent = Math.min((registeredCount / tour.maxTeams) * 100, 100);
+            const timeLeft = getTimeLeft(tour.startDate);
+            const userTeamForThisTour = myTeams.find(t => t.tournamentId === tour.id);
+            const totalPrizePool = (tour.prize1 || 0) + (tour.prize2 || 0) + (tour.prize3 || 0) + (tour.prize4 || 0);
+
+            return (
+              <div key={tour.id} className="bg-[#151515] rounded-xl p-6 border border-gray-800 hover:border-purple-500/50 transition shadow-lg group relative overflow-hidden flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-lg flex items-center justify-center font-black text-sm">
-                        {team.teamTag}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-white text-base leading-tight">{team.teamName}</h4>
-                        <p className="text-xs text-purple-400">{team.tournamentName}</p>
-                      </div>
-                    </div>
-                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${team.status === 'approved' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : team.status === 'rejected' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}>{team.status.toUpperCase()}</span>
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="bg-purple-600/20 text-purple-400 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">{tour.type}</span>
+                    <span className="text-yellow-400 text-sm font-bold">{tour.time}</span>
                   </div>
-                  <p className="text-[10px] text-gray-500 mb-3">Captain: {team.captainEmail}</p>
+                  <h3 className="text-2xl font-bold mb-4 text-white group-hover:text-purple-400 transition">{tour.name}</h3>
                   
                   <div className="grid grid-cols-2 gap-2 mb-4">
-                    {team.players?.map((p: any, i: number) => (
-                      <div key={i} className="bg-[#0a0a0a] p-2 rounded border border-gray-800/50 text-[11px]">
-                        <span className="text-purple-400 font-bold">P{i+1}:</span> {p.name} <br/> <span className="text-gray-500 font-mono">UID: {p.uid}</span>
+                    <div className="bg-[#1a1a1a] p-3 rounded-lg border border-purple-500/30 text-center flex flex-col justify-center">
+                      <p className="text-xs text-gray-400 mb-1">এন্ট্রি ফি</p>
+                      <p className="font-black text-xl text-white">৳ {tour.entryFee || 0}</p>
+                    </div>
+                    <div 
+                      onClick={() => openPrizeModal(tour)}
+                      className="bg-[#1a1a1a] p-3 rounded-lg border border-green-500/30 text-center cursor-pointer hover:bg-[#222] transition group/prize relative flex flex-col justify-center"
+                    >
+                      <p className="text-xs text-gray-400 mb-1 group-hover/prize:text-green-400">মোট প্রাইজ পুল</p>
+                      <p className="font-black text-xl text-green-400">৳ {totalPrizePool}</p>
+                    </div>
+                  </div>
+
+                  <div className="mb-4 bg-[#1a1a1a] border border-yellow-500/30 rounded-lg p-3 text-center">
+                    <p className="text-[10px] text-gray-400 mb-2 uppercase tracking-widest">ম্যাচ শুরু হতে বাকি</p>
+                    {timeLeft.isTBA ? (
+                      <p className="font-mono font-black text-xl text-gray-500">TBA</p>
+                    ) : timeLeft.isLive ? (
+                      <p className="font-mono font-black text-xl text-red-500 animate-pulse">LIVE NOW</p>
+                    ) : (
+                      <div className="flex justify-center items-center gap-1 font-mono font-black text-2xl text-yellow-400">
+                        <div className="flex flex-col items-center">
+                          <span>{timeLeft.h}</span>
+                          <span className="text-[9px] text-gray-500 font-sans mt-1">ঘণ্টা</span>
+                        </div>
+                        <span className="pb-4">:</span>
+                        <div className="flex flex-col items-center">
+                          <span>{timeLeft.m}</span>
+                          <span className="text-[9px] text-gray-500 font-sans mt-1">মিনিট</span>
+                        </div>
+                        <span className="pb-4">:</span>
+                        <div className="flex flex-col items-center">
+                          <span>{timeLeft.s}</span>
+                          <span className="text-[9px] text-gray-500 font-sans mt-1">সেকেন্ড</span>
+                        </div>
                       </div>
-                    ))}
+                    )}
+                  </div>
+                  
+                  <button 
+                    onClick={() => openTeamsList(tour)} 
+                    className="w-full bg-[#222] hover:bg-[#333] text-gray-300 font-bold py-2 rounded-lg text-xs border border-gray-700 transition mb-4"
+                  >
+                    👥 রেজিস্টার্ড টিম দেখুন
+                  </button>
+
+                  <div className="mb-5">
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-gray-400">রেজিস্ট্রেশন</span>
+                      <span className={isFull ? "text-red-400 font-bold" : "text-purple-400 font-bold"}>
+                        {registeredCount}/{tour.maxTeams} টিম
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-800 rounded-full h-2">
+                      <div className={`h-2 rounded-full ${isFull ? 'bg-red-500' : 'bg-purple-500'}`} style={{ width: `${progressPercent}%` }}></div>
+                    </div>
                   </div>
                 </div>
 
-                <div>
-                  <div className="flex gap-2 mb-3">
-                    <button onClick={() => updateStatus(team.id, 'approved')} disabled={team.status === 'approved'} className="flex-1 bg-green-600/10 text-green-500 border border-green-500/30 hover:bg-green-600 hover:text-white py-2 rounded font-bold text-xs transition disabled:opacity-50">Approve</button>
-                    <button onClick={() => updateStatus(team.id, 'rejected')} disabled={team.status === 'rejected'} className="flex-1 bg-red-600/10 text-red-500 border border-red-500/30 hover:bg-red-600 hover:text-white py-2 rounded font-bold text-xs transition disabled:opacity-50">Reject</button>
-                  </div>
-                  {team.status === 'approved' && (
-                    <div className="flex gap-2 bg-[#0a0a0a] p-2 rounded-lg border border-gray-800">
-                      <input type="text" placeholder="Room ID" defaultValue={team.roomId} id={`roomId_${team.id}`} className="flex-1 w-full bg-[#151515] border border-gray-700 rounded p-2 text-xs text-white outline-none focus:border-blue-500" />
-                      <input type="text" placeholder="Password" defaultValue={team.roomPass} id={`roomPass_${team.id}`} className="flex-1 w-full bg-[#151515] border border-gray-700 rounded p-2 text-xs text-white outline-none focus:border-blue-500" />
-                      <button onClick={() => {
-                        const rId = (document.getElementById(`roomId_${team.id}`) as HTMLInputElement).value;
-                        const rPass = (document.getElementById(`roomPass_${team.id}`) as HTMLInputElement).value;
-                        saveRoomDetails(team.id, rId, rPass);
-                      }} className="bg-blue-600 hover:bg-blue-500 text-white px-3 rounded text-xs font-bold transition">Save</button>
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={() => setShowPointTable(true)} className="bg-[#1a1a1a] hover:bg-[#222] text-yellow-500 font-bold py-3 rounded-lg text-sm border border-yellow-500/30 transition flex items-center justify-center gap-1">
+                    🏆 পয়েন্ট টেবিল
+                  </button>
+                  
+                  {userTeamForThisTour ? (
+                    <button onClick={() => setShowMyTeams(true)} className="bg-green-600/20 text-green-400 font-bold py-3 rounded-lg text-sm border border-green-500/30 transition flex items-center justify-center gap-1">
+                      🔑 My Pass
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => handleJoinTournament(tour)} 
+                      disabled={isFull}
+                      className={`font-bold py-3 rounded-lg shadow-lg transition transform active:scale-95 text-sm ${
+                        isFull ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white shadow-green-500/20'
+                      }`}
+                    >
+                      {isFull ? 'Full' : 'Join Now'}
+                    </button>
                   )}
                 </div>
               </div>
-            ))}
+            );
+          })}
+        </div>
+      </main>
+
+      {/* ইউজার প্রোফাইল মডাল */}
+      {showProfile && user && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden relative">
+            <div className="h-24 bg-gradient-to-r from-purple-600 to-pink-600"></div>
+            <button onClick={() => setShowProfile(false)} className="absolute top-4 right-4 text-white hover:bg-black/30 w-8 h-8 rounded-full flex items-center justify-center">&times;</button>
+            
+            <div className="px-6 pb-6 text-center">
+              <img src={user.photoURL || "https://cdn-icons-png.flaticon.com/512/149/149071.png"} alt="Profile" className="w-20 h-20 rounded-full border-4 border-[#151515] mx-auto -mt-10 shadow-lg" />
+              <h2 className="text-xl font-bold text-white mt-3">{user.displayName}</h2>
+              <p className="text-gray-400 text-xs">{user.email}</p>
+              
+              <div className="bg-[#0a0a0a] p-4 rounded-xl border border-gray-800 mt-6 flex justify-between items-center">
+                <div className="text-left">
+                  <p className="text-gray-400 text-[10px] uppercase font-bold mb-1">বর্তমান ব্যালেন্স</p>
+                  <p className="text-2xl font-black text-green-400">৳ {userData?.balance || 0}</p>
+                </div>
+                <button onClick={() => { setShowProfile(false); setShowWallet(true); }} className="bg-green-600/20 text-green-400 border border-green-600 hover:bg-green-600 hover:text-white px-4 py-2 rounded-lg text-sm font-bold transition">ওয়ালেট</button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div className="bg-[#1a1a1a] p-3 rounded-xl border border-gray-800 flex flex-col items-center justify-center">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold mb-1">মোট ডিপোজিট</p>
+                  <p className="text-lg font-black text-green-400">৳ {totalDeposits}</p>
+                </div>
+                <div className="bg-[#1a1a1a] p-3 rounded-xl border border-gray-800 flex flex-col items-center justify-center">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold mb-1">মোট উইথড্র</p>
+                  <p className="text-lg font-black text-red-400">৳ {totalWithdraws}</p>
+                </div>
+                <div className="bg-[#1a1a1a] p-3 rounded-xl border border-gray-800 flex flex-col items-center justify-center">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold mb-1">মোট এন্ট্রি ফি</p>
+                  <p className="text-lg font-black text-yellow-500">৳ {totalEntryFees}</p>
+                </div>
+                <div className="bg-[#1a1a1a] p-3 rounded-xl border border-gray-800 flex flex-col items-center justify-center">
+                  <p className="text-gray-500 text-[10px] uppercase font-bold mb-1">মোট টিম</p>
+                  <p className="text-lg font-black text-blue-400">{myTeams.length} টি</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+      )}
 
-      </div>
+      {/* My Teams Modal */}
+      {showMyTeams && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#111]">
+              <h2 className="text-xl font-black text-white flex items-center gap-2"><span className="text-blue-500">🛡️</span> আমার টিম</h2>
+              <button onClick={() => setShowMyTeams(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {myTeams.length === 0 ? <p className="text-gray-500 text-center py-6">আপনি এখনো রেজিস্টার করেননি।</p> : (
+                myTeams.map((team) => {
+                  const tourData = tournaments.find(t => t.id === team.tournamentId);
+                  let isTimeToShow = false;
+                  
+                  if (tourData && tourData.startDate) {
+                    const matchTime = new Date(tourData.startDate).getTime();
+                    const currentTimeMs = currentTime.getTime();
+                    const tenMinsInMs = 10 * 60 * 1000;
+                    if (currentTimeMs >= (matchTime - tenMinsInMs)) {
+                      isTimeToShow = true;
+                    }
+                  }
+
+                  return (
+                  <div key={team.id} className="bg-[#1a1a1a] rounded-xl border border-gray-800 overflow-hidden">
+                    <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-[#222]">
+                      <div>
+                        <h3 className="text-lg font-bold text-white leading-tight">{team.teamName} <span className="text-xs text-purple-400">({team.teamTag})</span></h3>
+                        <p className="text-xs text-gray-400 mt-0.5">{team.tournamentName}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${team.status === 'approved' ? 'bg-green-500/20 text-green-400' : team.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{team.status}</span>
+                    </div>
+                    
+                    {team.status === 'approved' && (
+                      <div className="p-4">
+                        {isTimeToShow ? (
+                          team.roomId ? (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-[#0a0a0a] p-3 rounded-lg border border-green-500/30 flex flex-col justify-center items-center relative group">
+                                <p className="text-[10px] text-green-500 uppercase font-bold mb-1">Room ID</p>
+                                <p className="font-mono font-bold text-white text-lg">{team.roomId}</p>
+                                <button onClick={() => copyToClipboard(team.roomId)} className="absolute inset-0 bg-purple-600/90 text-white font-bold opacity-0 group-hover:opacity-100 transition flex items-center justify-center rounded-lg">কপি করুন</button>
+                              </div>
+                              <div className="bg-[#0a0a0a] p-3 rounded-lg border border-green-500/30 flex flex-col justify-center items-center relative group">
+                                <p className="text-[10px] text-green-500 uppercase font-bold mb-1">Password</p>
+                                <p className="font-mono font-bold text-white text-lg">{team.roomPass}</p>
+                                <button onClick={() => copyToClipboard(team.roomPass)} className="absolute inset-0 bg-purple-600/90 text-white font-bold opacity-0 group-hover:opacity-100 transition flex items-center justify-center rounded-lg">কপি করুন</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 rounded-lg text-center">
+                              <p className="text-yellow-500 font-bold mb-1">⏳ অপেক্ষা করুন</p>
+                              <p className="text-xs text-gray-400">অ্যাডমিন এখনো রুম আইডি আপডেট করেনি। কিছুক্ষণ পর চেক করুন।</p>
+                            </div>
+                          )
+                        ) : (
+                          <div className="bg-[#222] border border-gray-700 p-4 rounded-lg text-center">
+                            <p className="text-gray-400 font-bold mb-1 flex items-center justify-center gap-2"><span className="text-xl">🔒</span> রুম আইডি লক করা আছে</p>
+                            <p className="text-xs text-gray-500">ম্যাচ শুরু হওয়ার ঠিক ১০ মিনিট আগে আপনি রুম আইডি ও পাসওয়ার্ড দেখতে পাবেন।</p>
+                          </div>
+                        )}
+                        
+                        <div className="mt-4 pt-4 border-t border-gray-800">
+                          <p className="text-[10px] text-gray-500 uppercase font-bold mb-2">Players</p>
+                          <div className="space-y-1">
+                            {team.players?.map((p: any, i: number) => (
+                              <div key={i} className="flex justify-between text-xs">
+                                <span className="text-gray-400">{p.name}</span>
+                                <span className="text-gray-500 font-mono">{p.uid}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )})
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* প্রাইজ পুল মডাল */}
+      {showPrizeModal && viewingPrizeTournament && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#111]">
+              <div>
+                <h2 className="text-xl font-black text-green-400">প্রাইজ পুল</h2>
+                <p className="text-xs text-gray-400">{viewingPrizeTournament.name}</p>
+              </div>
+              <button onClick={() => setShowPrizeModal(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-yellow-500/30">
+                <span className="text-yellow-500 font-bold">১ম স্থান 🥇</span>
+                <span className="font-black text-white text-lg">৳ {viewingPrizeTournament.prize1 || 0}</span>
+              </div>
+              <div className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-gray-500/30">
+                <span className="text-gray-300 font-bold">২য় স্থান 🥈</span>
+                <span className="font-black text-white text-lg">৳ {viewingPrizeTournament.prize2 || 0}</span>
+              </div>
+              <div className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-amber-600/30">
+                <span className="text-amber-600 font-bold">৩য় স্থান 🥉</span>
+                <span className="font-black text-white text-lg">৳ {viewingPrizeTournament.prize3 || 0}</span>
+              </div>
+              <div className="flex justify-between items-center bg-[#0a0a0a] p-3 rounded-lg border border-gray-800">
+                <span className="text-gray-500 font-bold">৪র্থ স্থান</span>
+                <span className="font-black text-white text-lg">৳ {viewingPrizeTournament.prize4 || 0}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* টিম লিস্ট মডাল */}
+      {showTeamsList && viewingTournament && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#111] sticky top-0 z-10">
+              <div>
+                <h2 className="text-xl font-black text-white">রেজিস্টার্ড টিম</h2>
+                <p className="text-xs text-purple-400">{viewingTournament.name}</p>
+              </div>
+              <button onClick={() => setShowTeamsList(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            <div className="p-5">
+              <div className="space-y-3">
+                {allRegistrations.filter(reg => reg.tournamentId === viewingTournament.id).length === 0 ? (
+                  <p className="text-gray-500 text-center py-6">এখনো কোনো টিম রেজিস্টার করেনি।</p>
+                ) : (
+                  allRegistrations.filter(reg => reg.tournamentId === viewingTournament.id).map((team, index) => (
+                    <div key={team.id} className="bg-[#1a1a1a] p-3 rounded-lg border border-gray-800 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded flex items-center justify-center font-black text-xs">
+                          {index + 1}
+                        </div>
+                        <div>
+                          <p className="font-bold text-white uppercase text-sm">{team.teamName}</p>
+                          <p className="text-xs text-gray-500">({team.teamTag})</p>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold ${team.status === 'approved' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                        {team.status === 'approved' ? 'Approved' : 'Pending'}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* পয়েন্ট টেবিল মডাল */}
+      {showPointTable && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-[#151515] z-10">
+              <h2 className="text-xl font-black text-yellow-500 flex items-center gap-2"><span className="text-2xl">🏆</span> পয়েন্ট টেবিল</h2>
+              <button onClick={() => setShowPointTable(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            <div className="p-4 overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[500px]">
+                <thead className="bg-[#1a1a1a] text-gray-400 text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="py-3 px-3 text-center">#</th>
+                    <th className="py-3 px-3">Team</th>
+                    <th className="py-3 px-3 text-center">MP</th>
+                    <th className="py-3 px-3 text-center">CD</th>
+                    <th className="py-3 px-3 text-center">PP</th>
+                    <th className="py-3 px-3 text-center">KP</th>
+                    <th className="py-3 px-3 text-center text-yellow-500">TP</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {pointTable.length === 0 ? (
+                    <tr><td colSpan={7} className="text-center py-8 text-gray-500">এখনো পয়েন্ট আপডেট হয়নি।</td></tr>
+                  ) : (
+                    pointTable.map((team, index) => (
+                      <tr key={team.id} className="hover:bg-[#1a1a1a]/50">
+                        <td className="py-3 px-3 text-center font-bold text-gray-500">{String(index + 1).padStart(2, '0')}</td>
+                        <td className="py-3 px-3 font-bold text-white uppercase">{team.teamName} {index === 0 && '🏆'}</td>
+                        <td className="py-3 px-3 text-center text-gray-400">{team.mp}</td>
+                        <td className="py-3 px-3 text-center text-yellow-500 font-bold">{team.cd > 0 ? team.cd : '-'}</td>
+                        <td className="py-3 px-3 text-center text-gray-400">{team.pp}</td>
+                        <td className="py-3 px-3 text-center text-gray-400">{team.kp}</td>
+                        <td className="py-3 px-3 text-center font-black text-green-400 text-lg">{team.tp}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ওয়ালেট মডাল */}
+      {showWallet && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-black text-green-400">আমার ওয়ালেট</h2>
+              <button onClick={() => setShowWallet(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            
+            <div className="bg-[#0a0a0a] p-5 rounded-xl text-center mb-6 border border-gray-800">
+              <p className="text-gray-400 text-xs uppercase mb-1">বর্তমান ব্যালেন্স</p>
+              <p className="text-4xl font-black text-white">৳ {userData?.balance || 0}</p>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div className="bg-[#1a1a1a] p-4 rounded-xl border border-green-500/30">
+                <p className="text-xs font-bold text-green-400 mb-2 uppercase tracking-wider">টাকা জমা দিন (Deposit)</p>
+                
+                <div className="flex items-center justify-between bg-[#0a0a0a] border border-gray-700 p-3 rounded-lg mb-3">
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">bKash / Nagad (Personal)</p>
+                    <p className="font-mono text-white font-bold text-lg tracking-wider">01922-897145</p>
+                  </div>
+                  <button onClick={() => copyToClipboard('01922897145')} className="bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1 border border-green-500/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    কপি
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <input type="text" placeholder="ট্রানজেকশন আইডি (TrxID)" value={depositTrxId} onChange={(e) => setDepositTrxId(e.target.value)} className="w-full bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-green-500" />
+                  <div className="flex gap-2">
+                     <input type="number" placeholder="৳ পরিমাণ" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} className="w-1/2 bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-green-500" />
+                     <button onClick={handleDeposit} className="w-1/2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition">জমা দিন</button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-[#1a1a1a] p-4 rounded-xl border border-gray-800">
+                <p className="text-xs font-bold text-yellow-400 mb-2 uppercase tracking-wider">টাকা উত্তোলন (Withdraw)</p>
+                <div className="flex gap-2">
+                  <input type="number" placeholder="৳ পরিমাণ" value={withdrawAmount} onChange={(e) => setWithdrawAmount(e.target.value)} className="flex-1 bg-[#0a0a0a] border border-gray-700 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-yellow-500" />
+                  <button onClick={handleWithdraw} className="bg-yellow-600 hover:bg-yellow-500 text-black px-4 py-2 rounded-lg font-bold text-sm">তুলুন</button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="border-t border-gray-800 pt-4">
+               <h3 className="text-xs font-bold text-gray-400 uppercase mb-3">লেনদেনের ইতিহাস</h3>
+               <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
+                 {transactions.map(t => (
+                    <div key={t.id} className="flex justify-between items-center bg-[#1a1a1a] p-2 rounded border border-gray-800 text-xs">
+                      <div>
+                        <p className="font-bold text-white capitalize">{t.type === 'deposit' ? 'ডিপোজিট' : t.type === 'withdraw' ? 'উইথড্র' : 'এন্ট্রি ফি'}</p>
+                        <p className="text-[10px] text-gray-500">{formatDate(t.date)}</p>
+                      </div>
+                      <p className={`font-bold ${t.type === 'deposit' ? 'text-green-400' : 'text-red-400'}`}>{t.type === 'deposit' ? '+' : '-'} ৳ {t.amount}</p>
+                    </div>
+                 ))}
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* রেজিস্ট্রেশন মডাল */}
+      {showRegister && selectedTournament && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#151515] border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-white">রেজিস্ট্রেশন</h2>
+              <button onClick={() => setShowRegister(false)} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+            </div>
+            <form onSubmit={handleRegisterSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <input type="text" name="teamName" required placeholder="টিমের নাম" className="w-full bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white" />
+                <input type="text" name="teamTag" required maxLength={3} placeholder="ট্যাগ" className="w-full bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white uppercase" />
+              </div>
+              <div className="pt-4 border-t border-gray-800">
+                <h3 className="text-sm font-bold text-gray-400 mb-3">প্লেয়ার তথ্য</h3>
+                <div className="space-y-2">
+                  {[1, 2, 3, 4, 5].map((num) => (
+                    <div key={num} className="flex gap-2">
+                      <input type="text" name={`p${num}_name`} required placeholder={`Player ${num}`} className="flex-1 bg-[#0a0a0a] border border-gray-700 rounded-lg p-2 text-sm text-white" />
+                      <input type="text" name={`p${num}_uid`} required placeholder="FF UID" className="flex-1 bg-[#0a0a0a] border border-gray-700 rounded-lg p-2 text-sm text-white" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button type="submit" disabled={isSubmitting} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl mt-4">
+                {isSubmitting ? "অপেক্ষা করুন..." : `সাবমিট (৳ ${selectedTournament.entryFee})`}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <footer className="text-center py-8 border-t border-gray-800 mt-10">
+        <h4 className="text-lg font-black text-white mb-2">Tournament Market BD</h4>
+        <p className="text-xs text-gray-500 mb-4">বাংলাদেশের #১ ফ্রি ফায়ার টুর্নামেন্ট প্ল্যাটফর্ম</p>
+        <div className="flex justify-center gap-4">
+          <a href="#" className="text-gray-400 hover:text-red-500 transition">YouTube</a>
+          <a href="#" className="text-gray-400 hover:text-blue-500 transition">Facebook</a>
+          <a href="#" className="text-gray-400 hover:text-blue-400 transition">Telegram</a>
+        </div>
+      </footer>
+
     </div>
   );
 }
 
-// Next.js-এর SSR এরর এড়াতে এই ডাইনামিক এক্সপোর্টটি ব্যবহার করা হলো
-const DynamicAdmin = dynamic(() => Promise.resolve(AdminPanel), { ssr: false });
-
 export default function Page() {
-  return <DynamicAdmin />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0a0a] text-white flex justify-center items-center">লোড হচ্ছে...</div>}>
+      <HomeContent />
+    </Suspense>
+  );
 }

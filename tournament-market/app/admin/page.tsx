@@ -2,19 +2,19 @@
 
 import { useState, useEffect } from 'react';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, onAuthStateChanged } from 'firebase/auth';
 import { 
   getFirestore, collection, getDocs, doc, updateDoc, addDoc, 
-  onSnapshot, increment, query, where, deleteDoc
+  onSnapshot, increment, query, where
 } from 'firebase/firestore';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 
-export default function AdminPanel() {
+function AdminPanelContent() {
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // ডেটা স্টেট
   const [teams, setTeams] = useState<any[]>([]);
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [pendingDeposits, setPendingDeposits] = useState<any[]>([]);
@@ -172,7 +172,6 @@ export default function AdminPanel() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          {/* প্রাইজমানি আপডেট */}
           <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
             <h3 className="text-lg font-bold text-green-400 mb-4 flex items-center gap-2"><span className="text-xl">💰</span> প্রাইজমানি আপডেট</h3>
             <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
@@ -191,7 +190,6 @@ export default function AdminPanel() {
             </div>
           </div>
 
-          {/* পয়েন্ট আপডেট */}
           <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
             <h3 className="text-lg font-bold text-yellow-400 mb-4 flex items-center gap-2"><span className="text-xl">🏆</span> পয়েন্ট আপডেট</h3>
             <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
@@ -214,27 +212,22 @@ export default function AdminPanel() {
           </div>
         </div>
 
-        {/* নতুন টুর্নামেন্ট তৈরি */}
         <div className="bg-[#111] p-5 rounded-xl border border-gray-800 mb-12 shadow-lg">
           <h3 className="text-lg font-bold text-purple-400 mb-4 flex items-center gap-2"><span className="text-xl">➕</span> নতুন টুর্নামেন্ট তৈরি</h3>
           <form onSubmit={handleCreateTournament} className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <input type="text" name="name" required placeholder="টুর্নামেন্টের নাম" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
             <input type="text" name="time" required placeholder="সময় (যেমন: রাত ১১টা)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
             <input type="datetime-local" name="startDate" required className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            
             <input type="number" name="entryFee" required placeholder="এন্ট্রি ফি (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
             <input type="number" name="maxTeams" required placeholder="সর্বোচ্চ টিম" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-purple-500" />
-            
             <input type="number" name="prize1" required placeholder="১ম প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
             <input type="number" name="prize2" required placeholder="২য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
             <input type="number" name="prize3" required placeholder="৩য় প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
             <input type="number" name="prize4" required placeholder="৪র্থ প্রাইজ (৳)" className="bg-[#0a0a0a] border border-gray-700 rounded-lg p-3 text-white text-sm outline-none focus:border-green-500" />
-            
             <button type="submit" className="md:col-span-3 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-lg font-black tracking-wider transition">টুর্নামেন্ট তৈরি করুন</button>
           </form>
         </div>
 
-        {/* ডিপোজিট এবং উইথড্র */}
         <div className="grid md:grid-cols-2 gap-8 mb-12">
           <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
             <h3 className="text-lg font-bold text-yellow-400 mb-4">💰 পেন্ডিং ডিপোজিট ({pendingDeposits.length})</h3>
@@ -272,7 +265,6 @@ export default function AdminPanel() {
           </div>
         </div>
 
-        {/* টিম লিস্ট */}
         <div className="bg-[#111] p-5 rounded-xl border border-gray-800 shadow-lg">
           <h3 className="text-lg font-bold text-blue-400 mb-6 flex items-center gap-2"><span className="text-xl">📋</span> রেজিস্টার্ড টিম ও রুম আইডি ({teams.length})</h3>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -292,7 +284,6 @@ export default function AdminPanel() {
                     <span className={`px-2 py-1 rounded text-[10px] font-bold ${team.status === 'approved' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : team.status === 'rejected' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}>{team.status.toUpperCase()}</span>
                   </div>
                   <p className="text-[10px] text-gray-500 mb-3">Captain: {team.captainEmail}</p>
-                  
                   <div className="grid grid-cols-2 gap-2 mb-4">
                     {team.players?.map((p: any, i: number) => (
                       <div key={i} className="bg-[#0a0a0a] p-2 rounded border border-gray-800/50 text-[11px]">
@@ -327,4 +318,11 @@ export default function AdminPanel() {
       </div>
     </div>
   );
+}
+
+// Next.js-এর SSR এরর এড়াতে এই ডাইনামিক এক্সপোর্টটি ব্যবহার করা হলো
+const DynamicAdmin = dynamic(() => Promise.resolve(AdminPanelContent), { ssr: false });
+
+export default function Page() {
+  return <DynamicAdmin />;
 }
